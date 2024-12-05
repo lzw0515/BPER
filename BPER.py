@@ -10,16 +10,18 @@ import torch
 
 class ReplayBuffer:  # for off-policy
     def __init__(self, args):
+        
         pass
     
     def update_now_len(self):
+        """ This function is designed to assess the current quantity of experience available. """
         self.now_len = self.max_len if self.if_full else self.next_idx
         
     def td_error_update(self, td_error):
         self.per_tree.td_error_update(td_error)
     
-    def update_priority(self, args, z = 1):
-        """ BPER Method for updating priorities """
+    def update_priority(self, args, cycle = 1):
+        """ This is the primary function for the BPER algorithm to update the experience priorities. """
         self.update_now_len()
         
         state_dim = self.state_dim
@@ -38,16 +40,15 @@ class ReplayBuffer:  # for off-policy
             self.buf_priority[a,i] = a.shape[0] / self.now_len
             
               
-        self.buf_priority[:self.now_len] = self.buf_priority[:self.now_len] * 0.1 + 1 # Fixed importance coefficient k_r 0.1
+        self.buf_priority[:self.now_len] = self.buf_priority[:self.now_len] * 0.1 + 1 # Fixed importance coefficient k_r=0.1 The value of k_r can be adjusted based on the task, as explained in the referenced paper.
         priority = 1 / np.prod(self.buf_priority[:self.now_len], axis = 1)
 
-        """ z means that after several rounds of updates, one round has 1000 time steps, plus how many workers. 
-        This is the total number of experiences in the latest batch. The latest batch of experiences set a higher priority.
-        z and zz are just randomly named parameter names, with no canonical collation """
-        zz = z * args.max_step * args.worker_num
-        data_ids=np.arange(self.next_idx - zz, self.next_idx) % self.max_len
+        """ The following lines of code are designed to assign a higher rarity to the most recently added experience. You can modify it as needed. In my code, I have set max_step to 1000, worker_num represents the actors, and cycle indicates the number of rounds that have been completed. By multiplying these values, we obtain the total amount of new experience incorporated during this update. """
+        latestExpCount = cycle * args.max_step * args.worker_num
+        data_ids=np.arange(self.next_idx - latestExpCount, self.next_idx) % self.max_len
         priority[data_ids] = self.priority_max
 
+        # Lastly, the priority of all experiences is updated within the tree.
         self.per_tree.update_priority(priority)
         
 class BinarySearchTree:
@@ -80,9 +81,9 @@ class BinarySearchTree:
         
         self.if_damping = args.if_damping
         self.damping = args.damping#衰减系数
-        if self.if_use_PER or self.if_use_PSER:
+        if self.if_use_PER:
             self.get_indices_is_weights = self.get_indices_is_weights_per
-            self.td_error_update = self.td_error_update_PER if self.if_use_PER else self.td_error_update_PSER
+            self.td_error_update = self.td_error_update_PER
         elif args.if_use_BPER:
             self.get_indices_is_weights = self.get_indices_is_weights_BPER
 
@@ -188,43 +189,6 @@ class BinarySearchTree:
         prob = td_error.squeeze().clamp(1e-6, 10).pow(self.per_alpha)
         prob = prob.cpu().numpy()
         self.update_ids(self.indices, prob)
-    
-    def td_error_update_PSER(self, td_error):  # td_error = (q-q).detach_().abs() squeeze()将单维度条目删掉，
-        td_error1 = td_error.squeeze().clamp(1e-6, 10)
-        
-        prob = td_error1.tolist() #转换成list
-        indices = self.indices.tolist()
-        
-        self.prob_before[indices] = td_error1.cpu().numpy() #这个就是拿来存第一手td-errors的
-        
-        for i in range(len(indices)):
-            temp_indice = indices[i]
-            temp_value = prob[i]
-            for j in range(self.PSER_W):
-                indice = temp_indice - j - 1 #indice为实际大数组的索引
-                if(indice < 0):
-                    break
-                temp_value = temp_value * self.PSER_rou
-                
-                """ if(temp_value < self.prob_before[indice]): #pi = max(td , pi*n)
-                    continue
-                else:
-                    indices.append(indice)
-                    prob.append(temp_value) """
-                    
-                if(temp_value * self.PSER_n < self.prob_before[indice]): #pi = max(td , pi*rou)
-                    continue
-                else:
-                    indices.append(indice)
-                    prob.append(temp_value * self.PSER_n)
-        
-        prob = np.array(prob)
-        prob = np.power(prob, self.per_alpha)
-        
-        indices = np.array(indices)
-        
-        self.update_ids(indices, prob)
-
     
     def update_all_ids(self,priority):
         """ 
