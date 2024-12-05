@@ -39,11 +39,14 @@ class ReplayBuffer:  # for off-policy
             a = np.argwhere(index >= args.histogram_bins - 1)[:,0]
             self.buf_priority[a,i] = a.shape[0] / self.now_len
             
-              
-        self.buf_priority[:self.now_len] = self.buf_priority[:self.now_len] * 0.1 + 1 # Fixed importance coefficient k_r=0.1 The value of k_r can be adjusted based on the task, as explained in the referenced paper.
+        # Fixed importance coefficient k_r=0.1 The value of k_r can be adjusted based on the task, as explained in the referenced paper. 
+        self.buf_priority[:self.now_len] = self.buf_priority[:self.now_len] * 0.1 + 1 
         priority = 1 / np.prod(self.buf_priority[:self.now_len], axis = 1)
 
-        """ The following lines of code are designed to assign a higher rarity to the most recently added experience. You can modify it as needed. In my code, I have set max_step to 1000, worker_num represents the actors, and cycle indicates the number of rounds that have been completed. By multiplying these values, we obtain the total amount of new experience incorporated during this update. """
+        """ The following lines of code are designed to assign a higher rarity to the most recently added experience. 
+        You can modify it as needed. In my code, I have set max_step to 1000, worker_num represents the actors, 
+        and cycle indicates the number of rounds that have been completed. 
+        By multiplying these values, we obtain the total amount of new experience incorporated during this update. """
         latestExpCount = cycle * args.max_step * args.worker_num
         data_ids=np.arange(self.next_idx - latestExpCount, self.next_idx) % self.max_len
         priority[data_ids] = self.priority_max
